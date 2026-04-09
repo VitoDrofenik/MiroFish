@@ -29,4 +29,5 @@ Dockerfile-old
 README.md
 README-ZH.md
 LICENSE
-locales
+
+# Keep `locales/` — backend loads languages.json and *.json at import time (see app/utils/locale.py).
