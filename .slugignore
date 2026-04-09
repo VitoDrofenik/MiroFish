@@ -1,0 +1,32 @@
+# Shrink Heroku slugs: omit paths not needed by `web` (Flask in backend/).
+# https://devcenter.heroku.com/articles/slug-compiler#ignoring-files-with-slugignore
+
+.git
+.github
+
+# Frontend is not served by the Python Procfile; exclude if you only deploy the API.
+frontend
+
+# Root Node tooling (if present)
+node_modules
+
+# Tests and caches
+**/tests
+**/__pycache__
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Local / CI-only
+.env
+.env.*
+!.env.example
+
+docker-compose.yml
+Dockerfile-old
+
+# Repo metadata (not imported at runtime)
+README.md
+README-ZH.md
+LICENSE
+locales

@@ -2,7 +2,10 @@
 # MiroFish Backend Dependencies
 # ===========================================
 # Python 3.11+ required
-# Install: pip install -r requirements.txt
+#
+# For locked production installs (Heroku, Docker): use the repo-root
+# `requirements.txt` generated from `backend/` with `uv export` (see backend/pyproject.toml).
+# Local quickstart: pip install -r requirements.txt
 # ===========================================
 
 # ============= 核心框架 =============

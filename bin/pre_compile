@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Runs before dependency installation (Heroku Python buildpack).
+# https://devcenter.heroku.com/articles/deploying-python
+set -euo pipefail
+
+# Avoid caching wheels into the slug (saves space on large stacks).
+export PIP_NO_CACHE_DIR=1

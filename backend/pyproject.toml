@@ -32,6 +32,10 @@ dependencies = [
     # 工具库
     "python-dotenv>=1.0.0",
     "pydantic>=2.0.0",
+
+    # Transitive via camel-ai / sentence-transformers; pinned here so `tool.uv.sources` resolves
+    # CPU-only wheels from PyTorch’s index (no CUDA metapackages — required for Heroku slug size).
+    "torch==2.9.1",
 ]
 
 [project.optional-dependencies]
@@ -53,3 +57,13 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+# Heroku and other CPU-only hosts: resolve PyTorch from the official CPU wheel index so we do
+# not pull multi‑GB NVIDIA CUDA packages (and stay under slug size limits).
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

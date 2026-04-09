@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+# Runs after `pip install` / `uv sync` (Heroku Python buildpack).
+# Dynos are CPU-only; PyPI's default Linux torch pulls multi‑GB NVIDIA CUDA metapackages.
+# If those appear, strip them and reinstall the CPU-only torch wheel.
+set -euo pipefail
+
+BUILD_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON="${BUILD_DIR}/.heroku/python/bin/python"
+if [[ ! -x "$PYTHON" ]]; then
+  PYTHON="$(command -v python3 || command -v python || true)"
+fi
+if [[ -z "$PYTHON" || ! -x "$PYTHON" ]]; then
+  echo "-----> post_compile: could not find Python; skipping CUDA cleanup"
+  exit 0
+fi
+
+PYTORCH_CPU_INDEX="https://download.pytorch.org/whl/cpu"
+TORCH_PIN="torch==2.9.1+cpu"
+
+cleanup_cuda_stack() {
+  echo "-----> Removing CUDA / NVIDIA Python wheels (CPU-only dynos; slug size fix)"
+  _pkgs="$("$PYTHON" -m pip freeze 2>/dev/null | { grep -E '^(nvidia-|cuda-|triton)==' || true; } | cut -d= -f1)"
+  while IFS= read -r pkg; do
+    [[ -z "${pkg}" ]] && continue
+    echo "       pip uninstall ${pkg}"
+    "$PYTHON" -m pip uninstall -y "${pkg}" 2>/dev/null || true
+  done <<<"${_pkgs}"
+  "$PYTHON" -m pip uninstall -y torch 2>/dev/null || true
+  echo "-----> Installing ${TORCH_PIN} from ${PYTORCH_CPU_INDEX}"
+  "$PYTHON" -m pip install --no-cache-dir --extra-index-url "${PYTORCH_CPU_INDEX}" "${TORCH_PIN}"
+}
+
+if [[ "$(uname -s)" == Linux ]]; then
+  if "$PYTHON" -m pip freeze 2>/dev/null | grep -qE '^nvidia-'; then
+    cleanup_cuda_stack
+  else
+    if "$PYTHON" - <<'PY' 2>/dev/null
+import importlib.util
+import sys
+if importlib.util.find_spec("torch") is None:
+    sys.exit(0)
+import torch
+v = getattr(torch, "__version__", "")
+sys.exit(0 if "+cpu" in v else 1)
+PY
+    then
+      echo "-----> torch looks like CPU build; no CUDA cleanup"
+    else
+      echo "-----> torch present but not a +cpu build on Linux; reinstalling CPU torch"
+      cleanup_cuda_stack
+    fi
+  fi
+fi
+
+rm -rf "${BUILD_DIR}/.cache/pip" "${BUILD_DIR}/.cache/huggingface" "${HOME}/.cache/pip" "${HOME}/.cache/huggingface" 2>/dev/null || true
+
+echo "-----> post_compile disk usage (helpful if slug is still too large)"
+du -sh "${BUILD_DIR}/.heroku/python" 2>/dev/null || true
+du -sh "${BUILD_DIR}" 2>/dev/null || true
