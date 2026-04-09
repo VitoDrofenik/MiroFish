@@ -6,6 +6,7 @@ Report API路由
 import os
 import traceback
 import threading
+from datetime import datetime
 from flask import request, jsonify, send_file
 
 from . import report_bp
@@ -227,42 +228,110 @@ def get_generate_status():
         
         task_id = data.get('task_id')
         simulation_id = data.get('simulation_id')
-        
-        # 如果提供了simulation_id，先检查是否已有完成的报告
-        if simulation_id:
-            existing_report = ReportManager.get_report_by_simulation(simulation_id)
-            if existing_report and existing_report.status == ReportStatus.COMPLETED:
-                return jsonify({
+
+        def _status_from_disk(sid: str):
+            """
+            Recover status from ReportManager (disk). Survives dyno restarts and multi-dyno
+            setups where in-memory TaskManager has no record.
+            """
+            reports = ReportManager.list_reports(simulation_id=sid, limit=1)
+            if not reports:
+                return None
+            r = reports[0]
+            if r.status == ReportStatus.COMPLETED:
+                return {
                     "success": True,
                     "data": {
-                        "simulation_id": simulation_id,
-                        "report_id": existing_report.report_id,
+                        "simulation_id": sid,
+                        "report_id": r.report_id,
                         "status": "completed",
                         "progress": 100,
                         "message": t('api.reportGenerated'),
-                        "already_completed": True
-                    }
+                        "already_completed": True,
+                    },
+                }
+            if r.status == ReportStatus.FAILED:
+                now = datetime.now().isoformat()
+                return {
+                    "success": True,
+                    "data": {
+                        "task_id": task_id or "",
+                        "task_type": "report_generate",
+                        "status": TaskStatus.FAILED.value,
+                        "created_at": now,
+                        "updated_at": now,
+                        "progress": 0,
+                        "message": r.error or t('progress.taskFailed'),
+                        "progress_detail": {},
+                        "result": None,
+                        "error": r.error,
+                        "metadata": {
+                            "simulation_id": sid,
+                            "report_id": r.report_id,
+                            "source": "report_storage",
+                        },
+                    },
+                }
+            prog = ReportManager.get_progress(r.report_id) or {}
+            now = datetime.now().isoformat()
+            return {
+                "success": True,
+                "data": {
+                    "task_id": task_id or "",
+                    "task_type": "report_generate",
+                    "status": TaskStatus.PROCESSING.value,
+                    "created_at": r.created_at or now,
+                    "updated_at": prog.get("updated_at", now),
+                    "progress": int(prog.get("progress", 0)),
+                    "message": prog.get("message", t('common.processing')),
+                    "progress_detail": {},
+                    "result": None,
+                    "error": None,
+                    "metadata": {
+                        "simulation_id": sid,
+                        "report_id": r.report_id,
+                        "source": "report_storage",
+                    },
+                },
+            }
+
+        if not task_id and not simulation_id:
+            return jsonify({
+                "success": False,
+                "error": t('api.requireTaskOrSimId')
+            }), 400
+
+        # Fresh in-memory task wins when available (most accurate progress).
+        if task_id:
+            task_manager = TaskManager()
+            task = task_manager.get_task(task_id)
+            if task:
+                return jsonify({
+                    "success": True,
+                    "data": task.to_dict()
                 })
-        
+
+        # Fall back to on-disk report / progress.json (Heroku: new dyno, scaled web>1, or restart).
+        if simulation_id:
+            disk = _status_from_disk(simulation_id)
+            if disk is not None:
+                return jsonify(disk)
+
         if not task_id:
             return jsonify({
                 "success": False,
                 "error": t('api.requireTaskOrSimId')
             }), 400
-        
-        task_manager = TaskManager()
-        task = task_manager.get_task(task_id)
-        
-        if not task:
-            return jsonify({
-                "success": False,
-                "error": t('api.taskNotFound', id=task_id)
-            }), 404
-        
+
+        logger.warning(
+            "Task %s not in memory and no recoverable report for simulation_id=%s",
+            task_id,
+            simulation_id,
+        )
         return jsonify({
-            "success": True,
-            "data": task.to_dict()
-        })
+            "success": False,
+            "error": t('api.taskNotFound', id=task_id)
+        }), 404
         
     except Exception as e:
         logger.error(f"查询任务状态失败: {str(e)}")
